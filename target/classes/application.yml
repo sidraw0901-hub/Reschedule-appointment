@@ -1,0 +1,37 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: carebridge-rescheduling-engine
+  datasource:
+    url: jdbc:h2:mem:carebridgedb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=PostgreSQL
+    driverClassName: org.h2.Driver
+    username: sa
+    password: 
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+carebridge:
+  strategy: RULE_BASED
+  outbox:
+    poll-interval-ms: 1000
+    batch-size: 10
+  llm:
+    gateway-url: ${LLM_GATEWAY_URL:http://localhost:8080/mock-llm}
+    api-key: ${LLM_API_KEY:mock-key}
+    timeout-ms: 3000
+
+logging:
+  level:
+    com.carebridge.rescheduling: INFO
