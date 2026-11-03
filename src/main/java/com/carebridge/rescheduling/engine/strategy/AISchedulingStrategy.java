@@ -55,51 +55,65 @@ public class AISchedulingStrategy implements SchedulingStrategy {
         try {
             String systemPrompt = """
                 You are a clinical scheduling optimization engine for CareBridge clinics.
-                Your task is to select the BEST appointment slot from the given eligible candidate slots for a patient whose appointment was disrupted.
+                Your task is to select the single BEST appointment slot from the provided eligible candidate slots for a patient whose appointment was disrupted.
                 
-                CRITICAL SAFETY RULES:
-                1. You MUST select exactly ONE recommendedSlotId from the candidates list.
-                2. NEVER hallucinate or invent a slot ID or provider ID.
-                3. Return STRICT JSON with keys:
-                   - "recommendedSlotId": string (UUID)
-                   - "alternateProviderId": string (UUID or null)
-                   - "confidenceScore": number between 0.0 and 1.0
-                   - "clinicalRationale": string
-                   - "patientFacingScript": string (natural empathetic phone script for clinic staff)
+                CRITICAL INSTRUCTIONS:
+                1. You MUST select exactly ONE recommendedSlotId matching a slot from the candidate list.
+                2. Prioritize: minimal time difference from original appointment, specialty compatibility, and continuity of care.
+                3. DO NOT hallucinate or invent slot IDs or provider IDs.
+                4. Output STRICT JSON only with keys:
+                   - "recommendedSlotId": string (UUID from the candidate list)
+                   - "alternateProviderId": string (UUID of the doctor for this slot, or null)
+                   - "confidenceScore": number between 0.0 and 1.0 (e.g. 0.95)
+                   - "clinicalRationale": string (brief clinical justification)
+                   - "patientFacingScript": string (empathetic phone script for clinic staff calling the patient)
                 """;
 
             StringBuilder userPrompt = new StringBuilder();
             userPrompt.append("Disrupted Visit Context:\n")
+                .append("- Patient: ").append(context.getPatientName() != null ? context.getPatientName() : "Patient").append("\n")
                 .append("- Specialty: ").append(context.getRequiredSpecialty()).append("\n")
                 .append("- Priority: ").append(context.getPatientPriority()).append("\n")
-                .append("- Original Doctor: ").append(context.getProviderName()).append("\n\n")
+                .append("- Original Doctor: ").append(context.getProviderName()).append("\n")
+                .append("- Original Scheduled Time: ").append(context.getOriginalStartTime()).append("\n\n")
                 .append("Eligible Candidate Slots (Choose one):\n");
 
             for (SlotCandidate c : eligibleCandidates) {
-                userPrompt.append(String.format("- Slot ID: %s | Provider: %s (Same: %s) | Time: %s | Room: %s | Diff: %d mins\n",
-                    c.getSlotId(), c.getProviderName(), c.isOriginalProvider(), c.getStartTime(), c.getRoomName(), c.getMinutesDifferenceFromOriginal()));
+                userPrompt.append(String.format("- Slot ID: %s | Provider ID: %s | Provider: %s (Same: %s) | Time: %s | Room: %s | Time Diff: %d mins\n",
+                    c.getSlotId(), c.getProviderId(), c.getProviderName(), c.isOriginalProvider(), c.getStartTime(), c.getRoomName(), c.getMinutesDifferenceFromOriginal()));
             }
 
             String rawGatewayResponse = llmGatewayClient.callLLMGateway(systemPrompt, userPrompt.toString());
+            log.info("Received LLM raw response (length: {})", rawGatewayResponse != null ? rawGatewayResponse.length() : 0);
 
-            // Extract content from OpenAI/Gemini format if nested
+            // Extract content from chat completion format
             String jsonContent = extractContent(rawGatewayResponse);
+            log.info("Extracted LLM JSON content: {}", jsonContent);
 
             LLMOutputValidator.ValidatedLLMOutput validated = outputValidator.validate(jsonContent, allowedSlotIds);
+
+            // Resolve receiving provider from chosen candidate slot
+            UUID receivingProviderId = validated.getAlternateProviderId();
+            for (SlotCandidate c : eligibleCandidates) {
+                if (c.getSlotId().equals(validated.getSlotId())) {
+                    receivingProviderId = c.getProviderId();
+                    break;
+                }
+            }
 
             log.info("AI Advisor successfully recommended slot [{}] with confidence [{}]",
                 validated.getSlotId(), validated.getConfidence());
 
             return Optional.of(RecommendationResult.builder()
                 .recommendedSlotId(validated.getSlotId())
-                .alternateProviderId(validated.getAlternateProviderId())
+                .alternateProviderId(receivingProviderId)
                 .confidence(validated.getConfidence())
                 .explanation(validated.getExplanation())
                 .strategyType(StrategyType.AI_POWERED)
                 .build());
 
         } catch (Exception ex) {
-            log.warn("AI Advisor unavailable or validation failed ({}). Seamlessly falling back to RuleBasedSchedulingStrategy.", ex.getMessage());
+            log.warn("AI Advisor error or validation failed ({}). Seamlessly falling back to RuleBasedSchedulingStrategy.", ex.getMessage());
             
             // Execute deterministic rule fallback
             Optional<RecommendationResult> ruleResult = ruleBasedStrategy.recommend(context, eligibleCandidates);

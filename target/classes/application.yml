@@ -23,14 +23,17 @@ spring:
       path: /h2-console
 
 carebridge:
-  strategy: RULE_BASED
+  strategy: AI_POWERED
   outbox:
     poll-interval-ms: 1000
     batch-size: 10
   llm:
-    gateway-url: ${LLM_GATEWAY_URL:http://localhost:8080/mock-llm}
-    api-key: ${LLM_API_KEY:mock-key}
-    timeout-ms: 3000
+    gateway-url: ${LLM_GATEWAY_URL:https://litellm-qc.zycus.net/v1/chat/completions}
+    api-key: ${LLM_API_KEY:sk-SfyNGxhcv7RnQKbZFWX2LQ}
+    model: ${LLM_MODEL:qwen-cursor}
+    product: ${LLM_PRODUCT:PC1}
+    cookie: ${LLM_COOKIE:6bf6da0e46dc446bd58693d49c303e18=f3f865650f0f8f3b30731936b2eb5857}
+    timeout-ms: ${LLM_TIMEOUT_MS:15000}
 
 logging:
   level:
